@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: personal_assistant agent (agent1.py) as a containerized Lambda
+
+Parameters:
+  AgentspanServerUrl:
+    Type: String
+    Description: URL of the persistently-hosted agentspan server (ECS/EC2) — NOT localhost.
+  AnthropicApiKeySecretArn:
+    Type: String
+    Description: Secrets Manager ARN holding ANTHROPIC_API_KEY.
+
+Resources:
+  SessionsTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey:
+        Name: session_id
+        Type: String
+
+  AssistantFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      MemorySize: 1024
+      Timeout: 60
+      Environment:
+        Variables:
+          SESSIONS_TABLE: !Ref SessionsTable
+          AGENTSPAN_SERVER_URL: !Ref AgentspanServerUrl
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SessionsTable
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref AnthropicApiKeySecretArn
+      FunctionUrlConfig:
+        AuthType: AWS_IAM
+    Metadata:
+      DockerTag: latest
+      DockerContext: .
+      Dockerfile: Dockerfile
+
+Outputs:
+  FunctionUrl:
+    Value: !GetAtt AssistantFunctionUrl.FunctionUrl

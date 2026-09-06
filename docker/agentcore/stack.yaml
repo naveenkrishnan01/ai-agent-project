@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  ECR repo + IAM execution role + Bedrock AgentCore Runtime for the
+  personal_assistant agent (agent1.py). Replaces the separate
+  `aws ecr create-repository` / `aws iam create-role` / `deploy_agentcore.py`
+  steps with one template.
+
+  IMPORTANT — this still needs two `aws cloudformation deploy` passes, not
+  one, because CloudFormation can't build or push a Docker image itself:
+    1. Deploy with DeployRuntime=false to create the ECR repo + IAM role.
+    2. docker build/push the image into that repo (see chat guidance).
+    3. Deploy again with DeployRuntime=true to create the Runtime resource,
+       now that an image actually exists at ContainerUri.
+
+Parameters:
+  ImageTag:
+    Type: String
+    Default: latest
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+  DeployRuntime:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Set to true only after the image has been pushed to ECR.
+
+Conditions:
+  CreateRuntime: !Equals [!Ref DeployRuntime, "true"]
+
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: personal-assistant
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AgentCoreRuntimeRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*"
+      Policies:
+        - PolicyName: AgentCoreExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/*"
+              - Effect: Allow
+                Action: ["logs:DescribeLogStreams", "logs:CreateLogGroup"]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*"
+              - Effect: Allow
+                Action: ["logs:PutResourcePolicy"]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/personal_assistant-*"
+              - Effect: Allow
+                Action: ["logs:DescribeLogGroups"]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*"
+              - Effect: Allow
+                Action: ["logs:CreateLogStream", "logs:PutLogEvents"]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*"
+              - Effect: Allow
+                Action: ["ecr:GetAuthorizationToken"]
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: bedrock-agentcore
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetWorkloadAccessToken
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                  - bedrock-agentcore:GetWorkloadAccessTokenForUserId
+                Resource:
+                  - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default"
+                  - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/personal_assistant-*"
+
+  Runtime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Condition: CreateRuntime
+    Properties:
+      AgentRuntimeName: personal_assistant
+      RoleArn: !GetAtt ExecutionRole.Arn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Sub "${Repository.RepositoryUri}:${ImageTag}"
+      NetworkConfiguration:
+        NetworkMode: PUBLIC
+      EnvironmentVariables:
+        ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+      LifecycleConfiguration:
+        IdleRuntimeSessionTimeout: 900
+        MaxLifetime: 28800
+
+Outputs:
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+  RoleArn:
+    Value: !GetAtt ExecutionRole.Arn
+  RuntimeArn:
+    Condition: CreateRuntime
+    Value: !GetAtt Runtime.AgentRuntimeArn
