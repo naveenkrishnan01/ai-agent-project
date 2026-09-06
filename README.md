@@ -140,14 +140,13 @@ Reusing the same `SESSION_ID` proves the session-scoped memory (section 3) actua
 uv run invoke_agentcore.py "My name is Naveen, remember that."
 uv run invoke_agentcore.py "What is my name?"
 
-## 8. Miscellenous
-
-All the expalnation for the code has inline comments in the code base for agent1.py, agent2.py and agent3.py
-I made the decisions to go wth BedRockAgent because it provides off the shelf configuration for deploys. 
-
-
 ```
 ```
 Assistant: Got it, Naveen — I'll remember that.
 Assistant: Your name is Naveen.
 ```
+
+## 8. Miscellenous
+
+All the expalnation for the code has inline comments in the code base for agent1.py, agent2.py and agent3.py
+I made the decisions to go wth BedRockAgent because it provides off the shelf configuration for deploys. 
